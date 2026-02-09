@@ -28,7 +28,7 @@ const DEFAULT_RPC_URL = 'https://mainnet.base.org'
 // VERIFIED TOKENS - Safeguard against scam tokens
 // ============================================================================
 const VERIFIED_TOKENS = {
-    'ETH': '0x4200000000000000000000000000000000000006',
+    'ETH': '0x0000000000000000000000000000000000000000',  // Native ETH
     'WETH': '0x4200000000000000000000000000000000000006',
     'USDC': '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
     'USDT': '0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2',
@@ -51,13 +51,12 @@ const TOKEN_ALIASES = {
     'TETHER': 'USDT',
 }
 
-const PROTECTED_SYMBOLS = ['ETH', 'WETH', 'USDC', 'USDT', 'DAI', 'USDS', 'AERO', 'cbBTC']
+const PROTECTED_SYMBOLS = ['ETH', 'WETH', 'USDC', 'USDT', 'DAI', 'USDS', 'AERO', 'cbBTC', 'BID']
 
 // Contracts
 const CONTRACTS = {
-    AeroRouter: '0xcF77a3Ba9A5CA399B7c97c74d54e5b1Beb874E43',
-    AeroFactory: '0x420DD381b31aEf6683db6B902084cB0FFECe40Da',
-    ApprovalHelper: '0x55881791383A2ab8Fb6F98267419e83e074fd076',
+    AeroUniversalRouter: '0x6Df1c91424F79E40E33B1A48F0687B666bE71075',
+    ZodiacHelpers: '0xc235D2475E4424F277B53D19724E2453a8686C54',
     WETH: '0x4200000000000000000000000000000000000006',
 }
 
@@ -69,12 +68,6 @@ const ERC20_ABI = [
     'function allowance(address, address) view returns (uint256)',
 ]
 
-const AERO_ROUTER_ABI = [
-    'function getAmountsOut(uint256 amountIn, (address from, address to, bool stable, address factory)[] routes) view returns (uint256[])',
-    'function swapExactTokensForTokens(uint256 amountIn, uint256 amountOutMin, (address from, address to, bool stable, address factory)[] routes, address to, uint256 deadline) returns (uint256[])',
-    'function swapExactETHForTokens(uint256 amountOutMin, (address from, address to, bool stable, address factory)[] routes, address to, uint256 deadline) payable returns (uint256[])',
-    'function swapExactTokensForETH(uint256 amountIn, uint256 amountOutMin, (address from, address to, bool stable, address factory)[] routes, address to, uint256 deadline) returns (uint256[])',
-]
 
 const ROLES_ABI = [
     'function execTransactionWithRole(address to, uint256 value, bytes data, uint8 operation, bytes32 roleKey, bool shouldRevert) returns (bool)',
@@ -82,6 +75,7 @@ const ROLES_ABI = [
 
 const APPROVAL_HELPER_ABI = [
     'function approveForRouter(address token, uint256 amount) external',
+    'function executeSwap(bytes commands, bytes[] inputs, uint256 deadline) external payable',
 ]
 
 // ============================================================================
@@ -161,9 +155,9 @@ async function resolveByAddress(address, provider) {
 // QUOTE (via API)
 // ============================================================================
 
-const QUOTE_API_URL = process.env.QUOTE_API_URL || 'https://m61wydzru6.execute-api.us-east-1.amazonaws.com/prod'
+const QUOTE_API_URL = process.env.QUOTE_API_URL || 'https://we-395242cd474c4e0f8b93ca567e0b58ce.ecs.eu-central-1.on.aws/'
 
-async function getQuote(provider, tokenIn, tokenOut, amountIn) {
+async function getQuote(provider, tokenIn, tokenOut, amountIn, safeAddress, slippage) {
     const response = await fetch(`${QUOTE_API_URL}/quote`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -171,6 +165,8 @@ async function getQuote(provider, tokenIn, tokenOut, amountIn) {
             tokenIn: tokenIn.address,
             tokenOut: tokenOut.address,
             amountIn: amountIn.toString(),
+            recipient: safeAddress,
+            slippage: slippage || 0.05,
             chainId: '8453',
         }),
     })
@@ -183,8 +179,11 @@ async function getQuote(provider, tokenIn, tokenOut, amountIn) {
 
     return {
         amountOut: BigInt(data.quote),
+        minAmountOut: data.minAmountOut ? BigInt(data.minAmountOut) : null,
         route: data.path,
         isMultiHop: data.isMultiHop,
+        calldata: data.calldata,  // Ready-to-use calldata for Universal Router
+        value: data.value ? BigInt(data.value) : 0n,  // ETH value to send (for ETH-in swaps)
     }
 }
 
@@ -215,7 +214,7 @@ function parseArgs() {
         amount: null,
         configDir: process.env.WALLET_CONFIG_DIR || path.join(__dirname, '..', 'config'),
         rpc: process.env.BASE_RPC_URL || DEFAULT_RPC_URL,
-        slippage: 1,
+        slippage: 0.05, // 5% - value between 0 and 0.5
         execute: false,
     }
 
@@ -266,7 +265,7 @@ Arguments:
   --from, -f       Token to swap from (symbol or address)
   --to, -t         Token to swap to (symbol or address)
   --amount, -a     Amount to swap
-  --slippage       Slippage % (default: 1)
+  --slippage       Slippage 0-0.5 (default: 0.05 = 5%)
   --execute, -x    Execute swap (default: quote only)
   --config-dir, -c Config directory
   --rpc, -r        RPC URL (default: ${DEFAULT_RPC_URL})
@@ -327,8 +326,9 @@ async function main() {
 
     // Check balance
     const safeAddress = config.safe
+    const NATIVE_ETH = '0x0000000000000000000000000000000000000000'
     let balance
-    if (tokenIn.address.toLowerCase() === CONTRACTS.WETH.toLowerCase()) {
+    if (tokenIn.address.toLowerCase() === NATIVE_ETH || tokenIn.address.toLowerCase() === CONTRACTS.WETH.toLowerCase()) {
         balance = await provider.getBalance(safeAddress)
     } else {
         const tokenContract = new ethers.Contract(tokenIn.address, ERC20_ABI, provider)
@@ -345,13 +345,13 @@ async function main() {
 
     let quote
     try {
-        quote = await getQuote(provider, tokenIn, tokenOut, amountIn)
+        quote = await getQuote(provider, tokenIn, tokenOut, amountIn, safeAddress, args.slippage)
     } catch (error) {
         console.error(`❌ ${error.message}`)
         process.exit(1)
     }
 
-    const minAmountOut = quote.amountOut * BigInt(100 - args.slippage) / 100n
+    const minAmountOut = quote.minAmountOut || (quote.amountOut * BigInt(100 - args.slippage) / 100n)
 
     console.log('═══════════════════════════════════════════════════════')
     console.log('                    SWAP SUMMARY')
@@ -359,7 +359,7 @@ async function main() {
     console.log(`  You pay:      ${formatAmount(amountIn, tokenIn.decimals, tokenIn.symbol)}`)
     console.log(`  You receive:  ${formatAmount(quote.amountOut, tokenOut.decimals, tokenOut.symbol)}`)
     console.log(`  Min receive:  ${formatAmount(minAmountOut, tokenOut.decimals, tokenOut.symbol)} (${args.slippage}% slippage)`)
-    console.log(`  Route:        ${quote.isMultiHop ? `${tokenIn.symbol} → WETH → ${tokenOut.symbol}` : `${tokenIn.symbol} → ${tokenOut.symbol}`}`)
+    console.log(`  Route:        ${quote.isMultiHop ? `${tokenIn.symbol} → ... → ${tokenOut.symbol}` : `${tokenIn.symbol} → ${tokenOut.symbol}`}`)
     console.log('═══════════════════════════════════════════════════════')
 
     if (!args.execute) {
@@ -380,24 +380,36 @@ async function main() {
 
     const wallet = new ethers.Wallet(privateKey, provider)
     const roles = new ethers.Contract(config.roles, ROLES_ABI, wallet)
-    const router = new ethers.Contract(CONTRACTS.AeroRouter, AERO_ROUTER_ABI, wallet)
 
-    const deadline = Math.floor(Date.now() / 1000) + 1200
-    const isETHIn = tokenIn.address.toLowerCase() === CONTRACTS.WETH.toLowerCase()
-    const isETHOut = tokenOut.address.toLowerCase() === CONTRACTS.WETH.toLowerCase()
+    const isETHIn = tokenIn.address.toLowerCase() === NATIVE_ETH
+    const isETHOut = tokenOut.address.toLowerCase() === NATIVE_ETH
 
-    // Handle approval
+    // Build executeSwap calldata for ApprovalHelper (delegatecall)
+    if (!quote.calldata) {
+        console.error('❌ Quote API did not return calldata.')
+        process.exit(1)
+    }
+
+    // API returns execute() calldata, replace selector with executeSwap()
+    // execute: 0x3593564c, executeSwap: 0xf23674e8
+    let swapCalldata = quote.calldata
+    if (swapCalldata.startsWith('0x3593564c')) {
+        swapCalldata = '0xf23674e8' + swapCalldata.slice(10)
+    }
+    const ethValue = quote.value ? BigInt(quote.value) : (isETHIn ? amountIn : 0n)
+
+    // Handle approval for the router we're using
     if (!isETHIn) {
         const tokenContract = new ethers.Contract(tokenIn.address, ERC20_ABI, provider)
         let allowance = 0n
         try {
-            allowance = await tokenContract.allowance(safeAddress, CONTRACTS.AeroRouter)
+            allowance = await tokenContract.allowance(safeAddress, CONTRACTS.AeroUniversalRouter)
         } catch {
             // Some tokens have issues with allowance checks, assume 0
         }
 
         if (allowance < amountIn) {
-            console.log('Approving token...')
+            console.log(`Approving token for router...`)
             const approvalInterface = new ethers.Interface(APPROVAL_HELPER_ABI)
             const approveData = approvalInterface.encodeFunctionData('approveForRouter', [
                 tokenIn.address,
@@ -405,7 +417,7 @@ async function main() {
             ])
 
             const approveTx = await roles.execTransactionWithRole(
-                CONTRACTS.ApprovalHelper,
+                CONTRACTS.ZodiacHelpers,
                 0n,
                 approveData,
                 1, // delegatecall
@@ -417,27 +429,12 @@ async function main() {
         }
     }
 
-    // Build swap tx
-    let swapData
-    if (isETHIn) {
-        swapData = router.interface.encodeFunctionData('swapExactETHForTokens', [
-            minAmountOut, quote.route, safeAddress, deadline,
-        ])
-    } else if (isETHOut) {
-        swapData = router.interface.encodeFunctionData('swapExactTokensForETH', [
-            amountIn, minAmountOut, quote.route, safeAddress, deadline,
-        ])
-    } else {
-        swapData = router.interface.encodeFunctionData('swapExactTokensForTokens', [
-            amountIn, minAmountOut, quote.route, safeAddress, deadline,
-        ])
-    }
-
+    // Execute swap via delegatecall to ZodiacHelpers.executeSwap
     const tx = await roles.execTransactionWithRole(
-        CONTRACTS.AeroRouter,
-        isETHIn ? amountIn : 0n,
-        swapData,
-        0,
+        CONTRACTS.ZodiacHelpers,
+        ethValue,
+        swapCalldata,
+        1,  // delegatecall
         config.roleKey,
         true
     )

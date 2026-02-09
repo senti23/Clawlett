@@ -138,8 +138,7 @@ Config is stored in `config/wallet.json` after initialization:
 
 | Contract | Address |
 |----------|---------|
-| Aerodrome Router | `0xcF77a3Ba9A5CA399B7c97c74d54e5b1Beb874E43` |
-| Aerodrome Factory | `0x420DD381b31aEf6683db6B902084cB0FFECe40Da` |
+| Aerodrome Universal Router | `0x6Cb442acF35158D5eDa88fe602221b67B400Be3e` |
 | ApprovalHelper | `0x55881791383A2ab8Fb6F98267419e83e074fd076` |
 | Safe Singleton | `0x3E5c63644E683549055b9Be8653de26E0B4CD36E` |
 | Safe Factory | `0xa6B71E26C5e0845f74c812102Ca7114b6a896AB2` |
@@ -156,6 +155,10 @@ This skill is designed to work with [OpenClaw](https://openclaw.ai) agents. The 
 - Protect users from scam tokens
 
 See [SKILL.md](./claw-wallet/SKILL.md) for the skill specification.
+
+## Contributing
+
+Contributions are welcome! See [CONTRIBUTING.md](./CONTRIBUTING.md) for guidelines.
 
 ## License
 

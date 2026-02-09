@@ -25,6 +25,7 @@ const __dirname = path.dirname(__filename)
 
 const DEFAULT_RPC_URL = 'https://mainnet.base.org'
 const CHAIN_ID = 8453
+const API_BASE_URL = process.env.WALLET_API_URL || 'https://trenches.bid'
 
 // Contract addresses
 const CONTRACTS = {
@@ -34,9 +35,8 @@ const CONTRACTS = {
     MultiSend: '0xA238CBeb142c10Ef7Ad8442C6D1f9E89e07e7761',
     RolesSingleton: '0x9646fDAD06d3e24444381f44362a3B0eB343D337',
     ModuleProxyFactory: '0x000000000000aDdB49795b0f9bA5BC298cDda236',
-    AeroRouter: '0xcF77a3Ba9A5CA399B7c97c74d54e5b1Beb874E43',
-    AeroFactory: '0x420DD381b31aEf6683db6B902084cB0FFECe40Da',
-    ApprovalHelper: '0xCD092570A70fECD7BB2Dd453F905C6Fd96dfefdc',
+    AeroUniversalRouter: '0x6Df1c91424F79E40E33B1A48F0687B666bE71075',
+    ZodiacHelpers: '0xc235D2475E4424F277B53D19724E2453a8686C54',
 }
 
 // ABIs
@@ -89,6 +89,7 @@ const STEPS = {
     SAFE_DEPLOYED: 'safe_deployed',
     ROLES_DEPLOYED: 'roles_deployed',
     CONFIGURED: 'configured',
+    REGISTERED: 'registered',
     COMPLETE: 'complete',
 }
 
@@ -157,6 +158,80 @@ function clearState(configDir) {
     }
 }
 
+// Backend registration functions
+async function checkExistingAgent(wallet) {
+    try {
+        const url = `${API_BASE_URL}/api/skill/agent?wallet=${wallet}&chainId=${CHAIN_ID}`
+        const response = await fetch(url)
+        if (response.ok) {
+            const data = await response.json()
+            // If needsRegistration is true, agent doesn't exist yet
+            if (data.needsRegistration) {
+                return null
+            }
+            return data
+        }
+    } catch (e) {
+        // Ignore - agent not found or API unavailable
+    }
+    return null
+}
+
+async function getRegistrationChallenge(wallet) {
+    const url = `${API_BASE_URL}/api/skill/agent?wallet=${wallet}&chainId=${CHAIN_ID}`
+    const response = await fetch(url)
+    const data = await response.json()
+
+    if (!response.ok) {
+        throw new Error(data.error || 'Failed to get registration challenge')
+    }
+
+    if (!data.needsRegistration || !data.jwt) {
+        throw new Error('Agent already registered')
+    }
+
+    return data.jwt
+}
+
+// Decode JWT to get the message (without verification - server will verify)
+function getMessageFromJwt(jwt) {
+    const parts = jwt.split('.')
+    if (parts.length !== 3) throw new Error('Invalid JWT')
+    const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString())
+    return payload.message
+}
+
+async function registerAgent(agentWallet, jwt, agentData) {
+    // Sign the challenge message
+    const message = getMessageFromJwt(jwt)
+    const signature = await agentWallet.signMessage(message)
+
+    const url = `${API_BASE_URL}/api/skill/agent`
+    const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            jwt,
+            signature,
+            wallet: agentWallet.address,
+            ...agentData,
+        }),
+    })
+
+    const result = await response.json()
+    if (!response.ok) {
+        throw new Error(result.error || 'Failed to register agent')
+    }
+
+    // Extract cookies from response (same as web auth)
+    const cookies = response.headers.getSetCookie?.() || []
+    const cookieString = cookies.map(c => c.split(';')[0]).join('; ')
+
+    return { ...result, cookies: cookieString }
+}
+
 function saveConfig(configDir, config) {
     const configPath = path.join(configDir, 'wallet.json')
     fs.writeFileSync(configPath, JSON.stringify(config, null, 2))
@@ -200,7 +275,7 @@ async function execSafeTransaction(safe, to, value, data, operation, signer) {
         signature
     )
 
-    return tx.wait()
+    return tx.wait(3) // Wait for 3 confirmations
 }
 
 async function main() {
@@ -250,9 +325,9 @@ async function main() {
     const agentBalance = await provider.getBalance(agentWallet.address)
     console.log(`Balance: ${ethers.formatEther(agentBalance)} ETH`)
 
-    if (agentBalance < ethers.parseEther('0.0003')) {
+    if (agentBalance < ethers.parseEther('0.000005')) {
         console.log(`\n⚠️  Agent needs gas for deployment.`)
-        console.log(`   Send at least 0.0003 ETH to: ${agentWallet.address}`)
+        console.log(`   Send at least 0.00002 ETH to: ${agentWallet.address}`)
         console.log(`   Then run this script again.\n`)
         process.exit(0)
     }
@@ -291,7 +366,8 @@ async function main() {
             saltNonce
         )
         console.log(`   Transaction: ${safeTx.hash}`)
-        const safeReceipt = await safeTx.wait()
+        console.log('   Waiting for 3 confirmations...')
+        const safeReceipt = await safeTx.wait(3)
 
         const proxyCreationTopic = ethers.id('ProxyCreation(address,address)')
         const safeCreationEvent = safeReceipt.logs.find(
@@ -306,7 +382,14 @@ async function main() {
         }
         console.log(`   Safe deployed: ${safeAddress}`)
 
-        state = { ...state, step: STEPS.SAFE_DEPLOYED, safe: safeAddress }
+        state = {
+            ...state,
+            step: STEPS.SAFE_DEPLOYED,
+            safe: safeAddress,
+            safeTxHash: safeReceipt.hash,
+            safeBlockNumber: safeReceipt.blockNumber,
+            safeBlockTime: new Date().toISOString(),
+        }
         saveState(args.configDir, state)
     } else {
         console.log(`\n--- Step 2: Safe ---`)
@@ -334,7 +417,8 @@ async function main() {
             saltNonce + 1n
         )
         console.log(`   Transaction: ${rolesTx.hash}`)
-        const rolesReceipt = await rolesTx.wait()
+        console.log('   Waiting for 3 confirmations...')
+        const rolesReceipt = await rolesTx.wait(3)
 
         const rolesEvent = rolesReceipt.logs.find(
             log => log.topics[0] === ethers.id('ModuleProxyCreation(address,address)')
@@ -372,30 +456,30 @@ async function main() {
             })
         }
 
-        // Scope and allow Aerodrome Router (with Send for ETH swaps)
-        console.log('   - scopeTarget(AeroRouter)')
+        // Scope and allow Aerodrome Universal Router (handles both V2 and CL pools)
+        console.log('   - scopeTarget(AeroUniversalRouter)')
         transactions.push({
             to: rolesAddress,
-            data: rolesInterface.encodeFunctionData('scopeTarget', [ROLE_KEY, CONTRACTS.AeroRouter]),
+            data: rolesInterface.encodeFunctionData('scopeTarget', [ROLE_KEY, CONTRACTS.AeroUniversalRouter]),
         })
 
-        console.log('   - allowTarget(AeroRouter, Send)')
+        console.log('   - allowTarget(AeroUniversalRouter, Send)')
         transactions.push({
             to: rolesAddress,
-            data: rolesInterface.encodeFunctionData('allowTarget', [ROLE_KEY, CONTRACTS.AeroRouter, ExecutionOptions.Send]),
+            data: rolesInterface.encodeFunctionData('allowTarget', [ROLE_KEY, CONTRACTS.AeroUniversalRouter, ExecutionOptions.Send]),
         })
 
-        // Scope and allow ApprovalHelper (with DelegateCall)
-        console.log('   - scopeTarget(ApprovalHelper)')
+        // Scope and allow ZodiacHelpers (with DelegateCall)
+        console.log('   - scopeTarget(ZodiacHelpers)')
         transactions.push({
             to: rolesAddress,
-            data: rolesInterface.encodeFunctionData('scopeTarget', [ROLE_KEY, CONTRACTS.ApprovalHelper]),
+            data: rolesInterface.encodeFunctionData('scopeTarget', [ROLE_KEY, CONTRACTS.ZodiacHelpers]),
         })
 
-        console.log('   - allowTarget(ApprovalHelper, DelegateCall)')
+        console.log('   - allowTarget(ZodiacHelpers, Both)')
         transactions.push({
             to: rolesAddress,
-            data: rolesInterface.encodeFunctionData('allowTarget', [ROLE_KEY, CONTRACTS.ApprovalHelper, ExecutionOptions.DelegateCall]),
+            data: rolesInterface.encodeFunctionData('allowTarget', [ROLE_KEY, CONTRACTS.ZodiacHelpers, ExecutionOptions.Both]),
         })
 
         // Assign role to agent
@@ -432,6 +516,7 @@ async function main() {
 
         const receipt = await execSafeTransaction(safe, CONTRACTS.MultiSend, 0n, multiSendData, 1, agentWallet)
         console.log(`   Transaction: ${receipt.hash}`)
+        console.log('   Confirmed (3 blocks)')
         console.log('   Configuration complete!')
 
         state = { ...state, step: STEPS.CONFIGURED }
@@ -457,6 +542,54 @@ async function main() {
         process.exit(1)
     }
 
+    // Step 5: Register with backend
+    let registration = state.registration
+    if (state.step !== STEPS.REGISTERED && state.step !== STEPS.COMPLETE) {
+        console.log('\n--- Step 5: Register with Backend ---')
+
+        // Check if already registered
+        const existingAgent = await checkExistingAgent(agentWallet.address.toLowerCase())
+        if (existingAgent && !existingAgent.error && !existingAgent.needsRegistration) {
+            console.log('   Already registered!')
+            registration = existingAgent
+        } else {
+            try {
+                // Get registration challenge JWT from API
+                const jwt = await getRegistrationChallenge(agentWallet.address.toLowerCase())
+
+                // Get block info for registration
+                const block = await provider.getBlock('latest')
+
+                // Register with signed challenge
+                registration = await registerAgent(agentWallet, jwt, {
+                    owner,
+                    safe: safeAddress,
+                    roles: rolesAddress,
+                    approvalHelper: CONTRACTS.ZodiacHelpers,
+                    roleKey: ROLE_KEY,
+                    chainId: CHAIN_ID,
+                    evt_tx_hash: state.safeTxHash || '',
+                    evt_block_number: state.safeBlockNumber?.toString() || block.number.toString(),
+                    evt_block_time: state.safeBlockTime || new Date(Number(block.timestamp) * 1000).toISOString(),
+                })
+
+                console.log(`   Registered! Agent ID: ${registration.id || 'N/A'}`)
+                if (registration.referralCode) {
+                    console.log(`   Referral code: ${registration.referralCode}`)
+                }
+
+                state = { ...state, step: STEPS.REGISTERED, registration }
+                saveState(args.configDir, state)
+            } catch (error) {
+                console.log(`   Warning: Registration failed: ${error.message}`)
+                console.log('   Agent will still work, but not tracked in database.')
+            }
+        }
+    } else {
+        console.log('\n--- Step 5: Registration ---')
+        console.log('   Already registered!')
+    }
+
     // Save final config
     const config = {
         chainId: CHAIN_ID,
@@ -467,6 +600,7 @@ async function main() {
         roleKey: ROLE_KEY,
         contracts: CONTRACTS,
         createdAt: new Date().toISOString(),
+        cookies: registration?.cookies, // Session cookies for API calls
     }
     saveConfig(args.configDir, config)
     clearState(args.configDir)
