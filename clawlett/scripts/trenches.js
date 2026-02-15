@@ -526,15 +526,6 @@ async function handleCreate(args) {
         process.exit(1)
     }
 
-    // Anti-bot + initial buy conflict check
-    const isAntiSnipeEnabled = !args.noAntibot
-    if (isAntiSnipeEnabled && args.initialBuy) {
-        console.error('Error: Cannot do initial buy with anti-bot protection enabled.')
-        console.error('The agent cannot buy during the 10-minute protection window.')
-        console.error('Use --no-antibot to disable protection, or remove --initial-buy.')
-        process.exit(1)
-    }
-
     // Resolve base token
     let baseTokenAddress
     if (!args.baseToken || args.baseToken.toUpperCase() === 'BID') {
