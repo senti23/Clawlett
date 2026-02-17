@@ -267,7 +267,7 @@ Scripts read from `config/wallet.json` (configured for Base Mainnet):
 | Safe Singleton | `0x3E5c63644E683549055b9Be8653de26E0B4CD36E` | Safe L2 impl |
 | CoW Settlement | `0x9008D19f58AAbD9eD0D60971565AA8510560ab41` | CoW Protocol settlement |
 | CoW Vault Relayer | `0xC92E8bdf79f0507f65a392b0ab4667716BFE0110` | CoW token allowance target |
-| ZodiacHelpers | `0x9699a24346464F1810a2822CEEE89f715c65F629` | Approvals, CoW presign, WETH wrap/unwrap, Trenches factory wrappers via delegatecall |
+| ZodiacHelpers | `0xb34a6210013977FC7D6082287e03915a66249799` | Approvals, CoW presign, WETH wrap/unwrap, Trenches factory wrappers via delegatecall |
 | AgentKeyFactoryV3 | `0x68035FbC9c47aCc89140705806E2C183F35B3A5a` | Trenches token creation and bonding curve trading |
 | Safe Factory | `0xa6B71E26C5e0845f74c812102Ca7114b6a896AB2` | Safe deployer |
 | Roles Singleton | `0x9646fDAD06d3e24444381f44362a3B0eB343D337` | Zodiac Roles |
