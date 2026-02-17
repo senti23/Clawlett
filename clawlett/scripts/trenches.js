@@ -443,7 +443,7 @@ Arguments:
   --initial-buy     Initial buy amount in ETH (optional, e.g., 0.01)
   --base-token      Base token for bonding curve: BID (default) or ETH
   --no-antibot      Disable anti-bot/sniper protection (enabled by default)
-  --image           Path to token image file (PNG/JPEG/WEBP, max 1MB)
+  --image           Path to token image file (PNG/JPEG/WEBP, max 4MB)
 
 Examples:
   node trenches.js create --name "My Token" --symbol MTK --description "A cool token"
@@ -696,8 +696,8 @@ async function handleCreate(args) {
             }
 
             const stat = fs.statSync(imagePath)
-            if (stat.size > 1_000_000) {
-                throw new Error(`Image too large (${(stat.size / 1_000_000).toFixed(1)}MB). Max 1MB.`)
+            if (stat.size > 4_000_000) {
+                throw new Error(`Image too large (${(stat.size / 1_000_000).toFixed(1)}MB). Max 4MB.`)
             }
 
             const ext = path.extname(imagePath).toLowerCase()

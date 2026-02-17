@@ -143,12 +143,13 @@ When a user asks to create a token, the agent MUST collect ALL of the following 
 | Name | **Yes** | The token name (e.g., "My Token") |
 | Symbol | **Yes** | The token ticker symbol (e.g., MTK) |
 | Description | **Yes** | A description of the token |
-| Image | No | Path to a token image file (PNG/JPEG/WEBP, max 1MB) |
+| Image | **Yes** | Path to a token image file (PNG/JPEG/WEBP, max 4MB) |
 | Base token | No | `BID` (default) or `ETH` — which token to pair with |
 | Anti-bot protection | No | ON by default (10-minute sniper protection). Ask user if they want it enabled or disabled |
 | Initial buy | No | Amount of ETH to buy immediately after creation (only works with anti-bot OFF) |
 | Twitter | No | Twitter/X handle for the token |
 | Website | No | Website URL for the token |
+| Team allocation | No | SSL team positions that the team can claim after the price moves beyond a given position |
 
 The agent should present the user with a summary of all parameters (including defaults) and ask for confirmation before executing the creation.
 
@@ -157,7 +158,7 @@ The agent should present the user with a summary of all parameters (including de
 - Anti-bot protection: ON (10-minute sniper protection window)
 - Initial buy is blocked when anti-bot is enabled (agent can't buy during protection window)
 - Use `--no-antibot` to disable protection and allow initial buy
-- Use `--image` to attach a custom token image (PNG/JPEG/WEBP, max 1MB)
+- Use `--image` to attach a custom token image (PNG/JPEG/WEBP, max 4MB)
 
 **Anti-bot protection and buying:**
 - The agent cannot buy any token that has anti-bot protection currently active (within the 10-minute window after creation)
@@ -170,6 +171,7 @@ The agent will:
 2. Get a quote/signature from the API
 3. **Display trade details for confirmation**
 4. Execute via Safe + Roles (ZodiacHelpers delegatecall)
+5. **After creation, share the token page URL:** `https://trenches.bid/tokens/[address]`
 
 The agent will:
 1. Resolve token symbols (with scam protection)
