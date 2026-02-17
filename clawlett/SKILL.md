@@ -160,6 +160,11 @@ The agent should present the user with a summary of all parameters (including de
 - Use `--no-antibot` to disable protection and allow initial buy
 - Use `--image` to attach a custom token image (PNG/JPEG/WEBP, max 4MB)
 
+**Image upload flow:**
+- Images are uploaded to `/api/skill/image` before token creation
+- The returned `imageUrl` is passed to the token creation API
+- If image upload fails, the token creation will fail (image is required)
+
 **Anti-bot protection and buying:**
 - The agent cannot buy any token that has anti-bot protection currently active (within the 10-minute window after creation)
 - This applies to all tokens, not just ones the agent created
@@ -167,9 +172,9 @@ The agent should present the user with a summary of all parameters (including de
 - Wait for the protection window to expire before buying
 
 The agent will:
-1. Resolve the token symbol via Trenches API
-2. Get a quote/signature from the API
-3. **Display trade details for confirmation**
+1. Upload token image via `/api/skill/image` (returns `imageUrl`)
+2. Get creation signature from `/api/skill/token/create` (includes `imageUrl`)
+3. **Display token details for confirmation**
 4. Execute via Safe + Roles (ZodiacHelpers delegatecall)
 5. **After creation, share the token page URL:** `https://trenches.bid/tokens/[address]`
 
@@ -268,7 +273,7 @@ Scripts read from `config/wallet.json` (configured for Base Mainnet):
 | CoW Settlement | `0x9008D19f58AAbD9eD0D60971565AA8510560ab41` | CoW Protocol settlement |
 | CoW Vault Relayer | `0xC92E8bdf79f0507f65a392b0ab4667716BFE0110` | CoW token allowance target |
 | ZodiacHelpers | `0xb34a6210013977FC7D6082287e03915a66249799` | Approvals, CoW presign, WETH wrap/unwrap, Trenches factory wrappers via delegatecall |
-| AgentKeyFactoryV3 | `0x68035FbC9c47aCc89140705806E2C183F35B3A5a` | Trenches token creation and bonding curve trading |
+| AgentKeyFactoryV3 | `0x2EA0010c18fa7239CAD047eb2596F8d8B7Cf2988` | Trenches token creation and bonding curve trading |
 | Safe Factory | `0xa6B71E26C5e0845f74c812102Ca7114b6a896AB2` | Safe deployer |
 | Roles Singleton | `0x9646fDAD06d3e24444381f44362a3B0eB343D337` | Zodiac Roles |
 | Module Factory | `0x000000000000aDdB49795b0f9bA5BC298cDda236` | Module deployer |

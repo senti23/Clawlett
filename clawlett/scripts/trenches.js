@@ -45,7 +45,7 @@ const TRENCHES_API_URL = process.env.TRENCHES_API_URL || 'https://trenches.bid'
 const VERCEL_PROTECTION_BYPASS = process.env.VERCEL_PROTECTION_BYPASS || ''
 
 // Contracts
-const AGENT_KEY_FACTORY = '0x68035FbC9c47aCc89140705806E2C183F35B3A5a'
+const AGENT_KEY_FACTORY = '0x2EA0010c18fa7239CAD047eb2596F8d8B7Cf2988'
 const WETH_ADDRESS = '0x4200000000000000000000000000000000000006'
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000'
 const BID_ADDRESS = '0xa1832f7F4e534aE557f9B5AB76dE54B1873e498B'
@@ -196,6 +196,42 @@ async function getAuthCookies(config, configDir, rpcUrl) {
 // API FUNCTIONS
 // ============================================================================
 
+async function uploadImageApi(cookies, imagePath) {
+    if (!fs.existsSync(imagePath)) {
+        throw new Error(`Image file not found: ${imagePath}`)
+    }
+
+    const stat = fs.statSync(imagePath)
+    if (stat.size > 4_000_000) {
+        throw new Error(`Image too large (${(stat.size / 1_000_000).toFixed(1)}MB). Max 4MB.`)
+    }
+
+    const ext = path.extname(imagePath).toLowerCase()
+    const mimeTypes = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp' }
+    const mimeType = mimeTypes[ext]
+    if (!mimeType) {
+        throw new Error(`Unsupported image type: ${ext}. Use PNG, JPEG, or WEBP.`)
+    }
+
+    const imageData = fs.readFileSync(imagePath)
+    const blob = new Blob([imageData], { type: mimeType })
+    const formData = new FormData()
+    formData.append('image', blob, path.basename(imagePath))
+
+    const response = await fetch(`${TRENCHES_API_URL}/api/skill/image`, {
+        method: 'POST',
+        headers: apiHeaders({ 'Cookie': cookies }),
+        body: formData,
+    })
+
+    const data = await response.json()
+    if (!response.ok) {
+        throw new Error(data.error || data.message || `Image upload failed: ${JSON.stringify(data)}`)
+    }
+
+    return data.imageUrl
+}
+
 async function createTokenApi(cookies, params) {
     const response = await fetch(`${TRENCHES_API_URL}/api/skill/token/create`, {
         method: 'POST',
@@ -213,6 +249,7 @@ async function createTokenApi(cookies, params) {
             chainId: CHAIN_ID,
             baseToken: params.baseToken || ZERO_ADDRESS,
             isAntiSnipeEnabled: params.isAntiSnipeEnabled !== false,
+            imageUrl: params.imageUrl || '',
         }),
     })
 
@@ -591,6 +628,15 @@ async function handleCreate(args) {
     // Get auth cookies
     const cookies = await getAuthCookies(config, args.configDir, args.rpc)
 
+    // Upload image if provided
+    let imageUrl = ''
+    if (args.image) {
+        console.log(`\nUploading image: ${args.image}`)
+        const imagePath = path.resolve(args.image)
+        imageUrl = await uploadImageApi(cookies, imagePath)
+        console.log('   Image uploaded successfully!')
+    }
+
     // Call create API
     console.log('\nRequesting token creation signature...')
     const apiResponse = await createTokenApi(cookies, {
@@ -602,6 +648,7 @@ async function handleCreate(args) {
         initialBuyAmount: args.initialBuy || '0',
         baseToken: baseTokenAddress,
         isAntiSnipeEnabled,
+        imageUrl,
     })
     console.log('Signature received.')
 
@@ -685,51 +732,6 @@ async function handleCreate(args) {
     console.log(`   Name: ${args.name}`)
     console.log(`   Symbol: ${args.symbol}`)
     console.log(`   Tx: ${receipt.hash}`)
-
-    // Upload image if provided
-    if (args.image && apiResponse.tokenId) {
-        console.log(`\nUploading image: ${args.image}`)
-        try {
-            const imagePath = path.resolve(args.image)
-            if (!fs.existsSync(imagePath)) {
-                throw new Error(`Image file not found: ${imagePath}`)
-            }
-
-            const stat = fs.statSync(imagePath)
-            if (stat.size > 4_000_000) {
-                throw new Error(`Image too large (${(stat.size / 1_000_000).toFixed(1)}MB). Max 4MB.`)
-            }
-
-            const ext = path.extname(imagePath).toLowerCase()
-            const mimeTypes = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp' }
-            const mimeType = mimeTypes[ext]
-            if (!mimeType) {
-                throw new Error(`Unsupported image type: ${ext}. Use PNG, JPEG, or WEBP.`)
-            }
-
-            const imageData = fs.readFileSync(imagePath)
-            const blob = new Blob([imageData], { type: mimeType })
-            const formData = new FormData()
-            formData.append('tokenId', String(apiResponse.tokenId))
-            formData.append('image', blob, path.basename(imagePath))
-
-            const uploadRes = await fetch(`${TRENCHES_API_URL}/api/tokens/create/profile`, {
-                method: 'POST',
-                headers: apiHeaders({ 'Cookie': cookies }),
-                body: formData,
-            })
-
-            if (!uploadRes.ok) {
-                const errData = await uploadRes.json().catch(() => ({}))
-                throw new Error(errData.error || errData.message || `Upload failed (${uploadRes.status})`)
-            }
-
-            console.log('   Image uploaded successfully!')
-        } catch (error) {
-            console.log(`   Warning: Image upload failed: ${error.message}`)
-            console.log('   Token will use auto-generated image.')
-        }
-    }
 }
 
 async function handleBuy(args) {

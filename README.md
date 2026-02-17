@@ -184,7 +184,7 @@ Config is stored in `config/wallet.json` after initialization:
 | Safe Factory | `0xa6B71E26C5e0845f74c812102Ca7114b6a896AB2` |
 | Roles Singleton | `0x9646fDAD06d3e24444381f44362a3B0eB343D337` |
 | Module Factory | `0x000000000000aDdB49795b0f9bA5BC298cDda236` |
-| AgentKeyFactoryV3 | `0x68035FbC9c47aCc89140705806E2C183F35B3A5a` |
+| AgentKeyFactoryV3 | `0x2EA0010c18fa7239CAD047eb2596F8d8B7Cf2988` |
 
 ## OpenClaw Integration
 
