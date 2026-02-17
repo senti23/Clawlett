@@ -38,6 +38,7 @@ const CONTRACTS = {
     ModuleProxyFactory: '0x000000000000aDdB49795b0f9bA5BC298cDda236',
     AeroUniversalRouter: '0x6Df1c91424F79E40E33B1A48F0687B666bE71075',
     ZodiacHelpers: '0x9699a24346464F1810a2822CEEE89f715c65F629',
+    UniswapSwapRouter02: '0x2626664c2603336E57B271c5C0b26F421741e481',
     IdentityRegistry: '0x8004A169FB4a3325136EB29fA0ceB6D2e539a432',
     CNS: '0x299319e0BC8d67e11AD8b17D4d5002033874De3a',
 }
@@ -558,6 +559,49 @@ async function main() {
             to: rolesAddress,
             data: rolesInterface.encodeFunctionData('allowTarget', [ROLE_KEY, CONTRACTS.AeroUniversalRouter, ExecutionOptions.Send]),
         })
+
+                // Scope and allow Uniswap V3 SwapRouter02
+        console.log('   - scopeTarget(UniswapSwapRouter02)')
+        transactions.push({
+            to: rolesAddress,
+            data: rolesInterface.encodeFunctionData('scopeTarget', [ROLE_KEY, CONTRACTS.UniswapSwapRouter02]),
+        })
+
+        console.log('   - allowTarget(UniswapSwapRouter02, Send)')
+        transactions.push({
+            to: rolesAddress,
+            data: rolesInterface.encodeFunctionData('allowTarget', [ROLE_KEY, CONTRACTS.UniswapSwapRouter02, ExecutionOptions.Send]),
+        })
+
+        // Scope and allow verified ERC20 tokens (for approve/transfer via Uniswap)
+        // NOTE: allowTarget permits all functions on these tokens (including transfer).
+        // For production, use scopeFunction to restrict to approve() only.
+        const VERIFIED_ERC20S = {
+            WETH: '0x4200000000000000000000000000000000000006',
+            USDC: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+            USDT: '0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2',
+            DAI: '0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb',
+            USDS: '0x820C137fa70C8691f0e44Dc420a5e53c168921Dc',
+            AERO: '0x940181a94A35A4569E4529A3CDfB74e38FD98631',
+            cbBTC: '0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf',
+            VIRTUAL: '0x0b3e328455c4059EEb9e3f84b5543F74E24e7E1b',
+            DEGEN: '0x4ed4E862860beD51a9570b96d89aF5E1B0Efefed',
+            BRETT: '0x532f27101965dd16442E59d40670FaF5eBB142E4',
+            TOSHI: '0xAC1Bd2486aAf3B5C0fc3Fd868558b082a531B2B4',
+            WELL: '0xA88594D404727625A9437C3f886C7643872296AE',
+            BID: '0xa1832f7f4e534ae557f9b5ab76de54b1873e498b',
+        }
+        for (const [symbol, address] of Object.entries(VERIFIED_ERC20S)) {
+            console.log(`   - scopeTarget + allowTarget(${symbol})`)
+            transactions.push({
+                to: rolesAddress,
+                data: rolesInterface.encodeFunctionData('scopeTarget', [ROLE_KEY, address]),
+            })
+            transactions.push({
+                to: rolesAddress,
+                data: rolesInterface.encodeFunctionData('allowTarget', [ROLE_KEY, address, ExecutionOptions.Send]),
+            })
+        }
 
         // Scope and allow ZodiacHelpers (with DelegateCall)
         console.log('   - scopeTarget(ZodiacHelpers)')
