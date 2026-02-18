@@ -4,17 +4,19 @@
   <img src="assets/mascot.jpg" alt="Clawlett Mascot" width="400">
 </p>
 
-An [OpenClaw](https://openclaw.ai) skill for autonomous token swaps on Base via Aerodrome, powered by Gnosis Safe + Zodiac Roles.
+An [OpenClaw](https://openclaw.ai) skill for autonomous token swaps and Trenches trading on Base, powered by Gnosis Safe + Zodiac Roles.
 
 ## Overview
 
-This skill enables AI agents to perform secure, permissioned token swaps through a Gnosis Safe. The agent operates through Zodiac Roles module which restricts operations to:
+This skill enables AI agents to perform secure, permissioned token swaps and Trenches token creation/trading through a Gnosis Safe. The agent operates through Zodiac Roles module which restricts operations to:
 
-- Swapping tokens via Aerodrome Router
-- Approving tokens only for the Aerodrome Router
+- Swapping tokens via CoW Protocol (MEV-protected)
+- Creating tokens on Trenches bonding curves
+- Buying and selling tokens on Trenches bonding curves
+- Approving tokens only for CoW Vault Relayer and AgentKeyFactoryV3
 - All swapped tokens return to the Safe (no external transfers)
 
-The human owner retains full control of the Safe while the agent can only execute swaps.
+The human owner retains full control of the Safe while the agent can only execute swaps and trades.
 
 ## Security Model
 
@@ -92,6 +94,39 @@ node clawlett/scripts/swap.js --from ETH --to USDC --amount 0.1 --execute
 node clawlett/scripts/swap.js --from USDC --to 0xa1832f7f4e534ae557f9b5ab76de54b1873e498b --amount 100 --execute
 ```
 
+### Trenches Trading
+
+Create tokens and trade on Trenches bonding curves:
+
+```bash
+# Create a new token
+node clawlett/scripts/trenches.js create --name "My Token" --symbol MTK --description "A cool token"
+node clawlett/scripts/trenches.js create --name "My Token" --symbol MTK --description "desc" --initial-buy 0.01
+
+# Buy tokens with ETH
+node clawlett/scripts/trenches.js buy --token MTK --amount 0.01
+
+# Sell tokens for ETH
+node clawlett/scripts/trenches.js sell --token MTK --amount 1000
+node clawlett/scripts/trenches.js sell --token MTK --all
+
+# Token info
+node clawlett/scripts/trenches.js info MTK
+```
+
+### Token Discovery
+
+Browse trending and top-performing tokens on Trenches:
+
+```bash
+node clawlett/scripts/trenches.js trending
+node clawlett/scripts/trenches.js trending --window 1h --limit 5
+node clawlett/scripts/trenches.js new
+node clawlett/scripts/trenches.js top-volume
+node clawlett/scripts/trenches.js gainers
+node clawlett/scripts/trenches.js losers
+```
+
 ### Custom RPC
 
 All scripts support `--rpc` flag for custom RPC endpoints:
@@ -137,6 +172,7 @@ Config is stored in `config/wallet.json` after initialization:
 | `BASE_RPC_URL` | `https://mainnet.base.org` | Base RPC endpoint |
 | `WALLET_CONFIG_DIR` | `./config` | Config directory |
 | `QUOTE_API_URL` | Production API | Quote/routing API |
+| `TRENCHES_API_URL` | `https://trenches.bid` | Trenches API endpoint |
 
 ## Contracts
 
@@ -148,6 +184,7 @@ Config is stored in `config/wallet.json` after initialization:
 | Safe Factory | `0xa6B71E26C5e0845f74c812102Ca7114b6a896AB2` |
 | Roles Singleton | `0x9646fDAD06d3e24444381f44362a3B0eB343D337` |
 | Module Factory | `0x000000000000aDdB49795b0f9bA5BC298cDda236` |
+| AgentKeyFactoryV3 | `0x2EA0010c18fa7239CAD047eb2596F8d8B7Cf2988` |
 
 ## OpenClaw Integration
 
@@ -156,6 +193,9 @@ This skill is designed to work with [OpenClaw](https://openclaw.ai) agents. The 
 - Check wallet balances on request
 - Get swap quotes and explain trade details
 - Execute swaps after user confirmation
+- Create tokens on Trenches bonding curves
+- Buy and sell tokens on Trenches bonding curves
+- Discover trending, new, and top-performing tokens
 - Protect users from scam tokens
 
 See [SKILL.md](./clawlett/SKILL.md) for the skill specification.

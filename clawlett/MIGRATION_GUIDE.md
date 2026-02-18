@@ -23,7 +23,7 @@ If the migration requires on-chain transactions (e.g., updating Roles permission
 |--------|------|
 | New `swap.js` — CoW Protocol presign flow | Code |
 | Old `swap.js` renamed to `swap-aerodrome.js` | Code |
-| ZodiacHelpers contract updated to `0x0bE5A04ea314d711Fbc6f726fBa7d2B6bfeff9B6` | Code + On-chain |
+| ZodiacHelpers contract updated to `0xb34a6210013977FC7D6082287e03915a66249799` | Code + On-chain |
 | `package.json` — added `swap-aerodrome` script entry | Code |
 | `SKILL.md` — documents CoW as default, Aerodrome as alternative | Code |
 
@@ -32,7 +32,7 @@ If the migration requires on-chain transactions (e.g., updating Roles permission
 | | Address |
 |---|---------|
 | Old | `0xc235D2475E4424F277B53D19724E2453a8686C54` |
-| New | `0x0bE5A04ea314d711Fbc6f726fBa7d2B6bfeff9B6` |
+| New | `0xb34a6210013977FC7D6082287e03915a66249799` |
 
 The new contract adds `cowPreSign()` and `approveForCow()` while retaining all existing functions (`approveForRouter`, `executeSwap`).
 
@@ -53,8 +53,8 @@ The Safe **owner** must submit a transaction to allow the new ZodiacHelpers addr
 Use the [Safe Transaction Builder](https://app.safe.global) to batch these calls to the **Roles Modifier** (`roles` address from `config/wallet.json`):
 
 ```
-1. scopeTarget(roleKey, 0x0bE5A04ea314d711Fbc6f726fBa7d2B6bfeff9B6)
-2. allowTarget(roleKey, 0x0bE5A04ea314d711Fbc6f726fBa7d2B6bfeff9B6, 3)
+1. scopeTarget(roleKey, 0xb34a6210013977FC7D6082287e03915a66249799)
+2. allowTarget(roleKey, 0xb34a6210013977FC7D6082287e03915a66249799, 3)
 3. revokeTarget(roleKey, 0xc235D2475E4424F277B53D19724E2453a8686C54)
 ```
 
