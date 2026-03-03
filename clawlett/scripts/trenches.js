@@ -98,7 +98,7 @@ function apiHeaders(extra = {}) {
 }
 
 function loadAgentAndRoles(config, configDir, rpcUrl) {
-    const provider = new ethers.JsonRpcProvider(rpcUrl)
+    const provider = new ethers.JsonRpcProvider(rpcUrl, CHAIN_ID, { staticNetwork: true })
 
     const agentPkPath = path.join(configDir, 'agent.pk')
     if (!fs.existsSync(agentPkPath)) {
@@ -151,7 +151,7 @@ async function getAuthCookies(config, configDir, rpcUrl) {
     let privateKey = fs.readFileSync(agentPkPath, 'utf8').trim()
     if (!privateKey.startsWith('0x')) privateKey = '0x' + privateKey
 
-    const provider = new ethers.JsonRpcProvider(rpcUrl)
+    const provider = new ethers.JsonRpcProvider(rpcUrl, CHAIN_ID, { staticNetwork: true })
     const wallet = new ethers.Wallet(privateKey, provider)
 
     const challengeRes = await fetch(
@@ -740,8 +740,8 @@ async function handleBuy(args) {
         printHelp('buy')
         process.exit(1)
     }
-    if (!args.amount) {
-        console.error('Error: --amount is required')
+    if (!args.amount && !args.all) {
+        console.error('Error: --amount or --all is required')
         printHelp('buy')
         process.exit(1)
     }
@@ -750,9 +750,11 @@ async function handleBuy(args) {
     const { provider, wallet, roles, zodiacHelpersAddress } = loadAgentAndRoles(config, args.configDir, args.rpc)
     const safeAddress = config.safe
 
-    // Resolve token
+    // Resolve token and detect base token in one API call
     console.log(`\nResolving token: ${args.token}`)
     let tokenAddress, tokenSymbol, tokenDecimals
+    let baseTokenAddress = WETH_ADDRESS
+    let baseTokenSymbol = 'ETH'
 
     if (args.token.startsWith('0x') && args.token.length === 42) {
         tokenAddress = ethers.getAddress(args.token)
@@ -760,13 +762,18 @@ async function handleBuy(args) {
         tokenSymbol = await tokenContract.symbol()
         tokenDecimals = Number(await tokenContract.decimals())
 
-        // Check anti-bot status via API
+        // Check anti-bot status and detect base token via API
         try {
             const tokenInfo = await getTokenInfo(tokenSymbol)
             if (tokenInfo.isAntiBotActive) {
                 console.error(`\nError: Anti-bot protection is active for ${tokenSymbol}.`)
                 console.error('The agent cannot buy during the protection window. Try again later.')
                 process.exit(1)
+            }
+            if (tokenInfo.baseToken && tokenInfo.baseToken.address &&
+                tokenInfo.baseToken.address.toLowerCase() === BID_ADDRESS.toLowerCase()) {
+                baseTokenAddress = BID_ADDRESS
+                baseTokenSymbol = 'BID'
             }
         } catch {}
     } else {
@@ -780,20 +787,60 @@ async function handleBuy(args) {
             console.error('The agent cannot buy during the protection window. Try again later.')
             process.exit(1)
         }
+        if (tokenInfo.baseToken && tokenInfo.baseToken.address &&
+            tokenInfo.baseToken.address.toLowerCase() === BID_ADDRESS.toLowerCase()) {
+            baseTokenAddress = BID_ADDRESS
+            baseTokenSymbol = 'BID'
+        }
     }
 
     console.log(`Token: ${tokenSymbol} (${tokenAddress})`)
 
-    const amountIn = ethers.parseEther(args.amount)
+    const isErc20Buy = baseTokenAddress !== WETH_ADDRESS
 
-    // Check Safe ETH balance
-    const ethBalance = await provider.getBalance(safeAddress)
-    console.log(`Safe ETH balance: ${formatEth(ethBalance)}`)
-    console.log(`Buy amount: ${formatEth(amountIn)}`)
+    // Determine buy amount
+    let amountIn
+    if (isErc20Buy) {
+        // BID-paired: check BID balance
+        const baseTokenContract = new ethers.Contract(baseTokenAddress, ERC20_ABI, provider)
+        const baseBalance = await baseTokenContract.balanceOf(safeAddress)
+        console.log(`Safe ${baseTokenSymbol} balance: ${formatAmount(baseBalance, 18, baseTokenSymbol)}`)
 
-    if (ethBalance < amountIn) {
-        console.error(`\nInsufficient ETH. Need ${formatEth(amountIn)}, have ${formatEth(ethBalance)}`)
-        process.exit(1)
+        if (args.all) {
+            amountIn = baseBalance
+            if (amountIn === 0n) {
+                console.error(`\nNo ${baseTokenSymbol} to spend`)
+                process.exit(1)
+            }
+            console.log(`Buying with all: ${formatAmount(amountIn, 18, baseTokenSymbol)}`)
+        } else {
+            amountIn = ethers.parseEther(args.amount)
+            console.log(`Buy amount: ${formatAmount(amountIn, 18, baseTokenSymbol)}`)
+            if (baseBalance < amountIn) {
+                console.error(`\nInsufficient ${baseTokenSymbol}. Need ${formatAmount(amountIn, 18, baseTokenSymbol)}, have ${formatAmount(baseBalance, 18, baseTokenSymbol)}`)
+                process.exit(1)
+            }
+        }
+    } else {
+        // ETH-paired: check ETH balance
+        const ethBalance = await provider.getBalance(safeAddress)
+        console.log(`Safe ETH balance: ${formatEth(ethBalance)}`)
+
+        if (args.all) {
+            amountIn = ethBalance
+            if (amountIn === 0n) {
+                console.error('\nNo ETH to spend')
+                process.exit(1)
+            }
+            console.log(`Buying with all: ${formatEth(amountIn)}`)
+        } else {
+            amountIn = ethers.parseEther(args.amount)
+            console.log(`Buy amount: ${formatEth(amountIn)}`)
+            if (ethBalance < amountIn) {
+                console.error(`\nInsufficient ETH. Need ${formatEth(amountIn)}, have ${formatEth(ethBalance)}`)
+                process.exit(1)
+            }
+        }
     }
 
     // Get auth cookies
@@ -804,15 +851,36 @@ async function handleBuy(args) {
     const apiResponse = await getSwapSignature(cookies, tokenAddress, amountIn.toString(), true)
     console.log('Signature received.')
 
-    // Compute sqrtPriceLimit
-    const sqrtPriceLimit = getSqrtPriceLimit(true, tokenAddress, WETH_ADDRESS)
+    // Compute sqrtPriceLimit using actual base token
+    const sqrtPriceLimit = getSqrtPriceLimit(true, tokenAddress, baseTokenAddress)
+
+    const zodiacHelpers = new ethers.Interface(ZODIAC_HELPERS_ABI)
+
+    // For ERC20-paired buys (e.g. BID), approve base token for factory
+    if (isErc20Buy) {
+        console.log(`\nApproving ${formatAmount(amountIn, 18, baseTokenSymbol)} for factory...`)
+        const approveData = zodiacHelpers.encodeFunctionData('approveForFactory', [
+            AGENT_KEY_FACTORY,
+            baseTokenAddress,
+            amountIn,
+        ])
+        const approveTx = await roles.execTransactionWithRole(
+            zodiacHelpersAddress,
+            0n,
+            approveData,
+            1, // delegatecall
+            config.roleKey,
+            true,
+        )
+        await approveTx.wait()
+        console.log('   Approved.')
+    }
 
     // Encode ZodiacHelpers.tradeViaFactory call
-    const zodiacHelpers = new ethers.Interface(ZODIAC_HELPERS_ABI)
     const encodedData = zodiacHelpers.encodeFunctionData('tradeViaFactory', [
         AGENT_KEY_FACTORY,
-        ZERO_ADDRESS,       // inputToken (ETH buy — no token approval needed)
-        0n,                 // approvalAmount (0 for buys)
+        isErc20Buy ? baseTokenAddress : ZERO_ADDRESS,  // inputToken
+        isErc20Buy ? amountIn : 0n,                    // approvalAmount
         {
             signature: apiResponse.signature,
             data: apiResponse.data,
@@ -823,10 +891,10 @@ async function handleBuy(args) {
             sqrtPriceLimit,
             minAmountOut: 0n,
         },
-        amountIn,           // ethValue
+        isErc20Buy ? 0n : amountIn,  // ethValue (0 for ERC20 buys)
     ])
 
-    // Execute via Roles (delegatecall, value=0n — ETH passed as explicit ethValue param)
+    // Execute via Roles (delegatecall)
     console.log('\nExecuting buy...')
     const tx = await roles.execTransactionWithRole(
         zodiacHelpersAddress,
@@ -849,7 +917,7 @@ async function handleBuy(args) {
     const newBalance = await tokenContract.balanceOf(safeAddress)
 
     console.log('\nBUY COMPLETE')
-    console.log(`   Spent: ${formatEth(amountIn)}`)
+    console.log(`   Spent: ${formatAmount(amountIn, 18, baseTokenSymbol)}`)
     console.log(`   Token: ${tokenSymbol}`)
     console.log(`   New balance: ${formatAmount(newBalance, tokenDecimals, tokenSymbol)}`)
     console.log(`   Tx: ${receipt.hash}`)
@@ -871,20 +939,37 @@ async function handleSell(args) {
     const { provider, wallet, roles, zodiacHelpersAddress } = loadAgentAndRoles(config, args.configDir, args.rpc)
     const safeAddress = config.safe
 
-    // Resolve token
+    // Resolve token and detect base token in one API call
     console.log(`\nResolving token: ${args.token}`)
     let tokenAddress, tokenSymbol, tokenDecimals
+    let baseTokenAddress = WETH_ADDRESS
+    let baseTokenSymbol = 'ETH'
 
     if (args.token.startsWith('0x') && args.token.length === 42) {
         tokenAddress = ethers.getAddress(args.token)
         const tokenContract = new ethers.Contract(tokenAddress, ERC20_ABI, provider)
         tokenSymbol = await tokenContract.symbol()
         tokenDecimals = Number(await tokenContract.decimals())
+
+        try {
+            const tokenInfo = await getTokenInfo(tokenSymbol)
+            if (tokenInfo.baseToken && tokenInfo.baseToken.address &&
+                tokenInfo.baseToken.address.toLowerCase() === BID_ADDRESS.toLowerCase()) {
+                baseTokenAddress = BID_ADDRESS
+                baseTokenSymbol = 'BID'
+            }
+        } catch {}
     } else {
         const tokenInfo = await getTokenInfo(args.token)
         tokenAddress = ethers.getAddress(tokenInfo.address || tokenInfo.tokenAddress)
         tokenSymbol = tokenInfo.symbol || args.token
         tokenDecimals = tokenInfo.decimals || 18
+
+        if (tokenInfo.baseToken && tokenInfo.baseToken.address &&
+            tokenInfo.baseToken.address.toLowerCase() === BID_ADDRESS.toLowerCase()) {
+            baseTokenAddress = BID_ADDRESS
+            baseTokenSymbol = 'BID'
+        }
     }
 
     console.log(`Token: ${tokenSymbol} (${tokenAddress})`)
@@ -919,8 +1004,8 @@ async function handleSell(args) {
     const apiResponse = await getSwapSignature(cookies, tokenAddress, amountIn.toString(), false)
     console.log('Signature received.')
 
-    // Compute sqrtPriceLimit
-    const sqrtPriceLimit = getSqrtPriceLimit(false, tokenAddress, WETH_ADDRESS)
+    // Compute sqrtPriceLimit using actual base token
+    const sqrtPriceLimit = getSqrtPriceLimit(false, tokenAddress, baseTokenAddress)
 
     // Encode ZodiacHelpers.tradeViaFactory call
     // tradeViaFactory bundles approval + trade in a single call
@@ -962,12 +1047,19 @@ async function handleSell(args) {
 
     // Show updated balances
     const newTokenBalance = await tokenContract.balanceOf(safeAddress)
-    const newEthBalance = await provider.getBalance(safeAddress)
 
     console.log('\nSELL COMPLETE')
     console.log(`   Sold: ${formatAmount(amountIn, tokenDecimals, tokenSymbol)}`)
     console.log(`   Remaining ${tokenSymbol}: ${formatAmount(newTokenBalance, tokenDecimals, tokenSymbol)}`)
-    console.log(`   ETH balance: ${formatEth(newEthBalance)}`)
+
+    if (baseTokenAddress === BID_ADDRESS) {
+        const bidContract = new ethers.Contract(BID_ADDRESS, ERC20_ABI, provider)
+        const newBidBalance = await bidContract.balanceOf(safeAddress)
+        console.log(`   BID balance: ${formatAmount(newBidBalance, 18, 'BID')}`)
+    } else {
+        const newEthBalance = await provider.getBalance(safeAddress)
+        console.log(`   ETH balance: ${formatEth(newEthBalance)}`)
+    }
     console.log(`   Tx: ${receipt.hash}`)
 }
 
