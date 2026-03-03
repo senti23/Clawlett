@@ -201,7 +201,7 @@ This skill is designed to work with [OpenClaw](https://openclaw.ai) agents. The 
 See [SKILL.md](./clawlett/SKILL.md) for the skill specification.
 
 ## Troubleshooting
-Running into the `Assertion failed: !(handle->flags & UV_HANDLE_CLOSING)` C++ thread error on Windows? Check out our [Windows Troubleshooting Guide](TROUBLESHOOTING.md) for the fix.
+Checkout [Troubleshooting Guide](TROUBLESHOOTING.md) for common issues. 
 
 ## Contributing
 
